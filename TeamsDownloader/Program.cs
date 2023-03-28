@@ -26,6 +26,7 @@ internal abstract class Program
 	private static IniConfigSource? _settings;
 	private static GraphServiceClient? _graphClient;
 	private static string? _saveFolderPath;
+	private static readonly List<Func<Task>> FileTasks = new();
 
 	private static async Task Main()
 	{
@@ -34,6 +35,11 @@ internal abstract class Program
 		try
 		{
 			await FetchMeetingRecordings();
+
+			for (int i = 0; i < FileTasks.Count; i++)
+			{
+				await FileTasks[i].Invoke();
+			}
 		}
 		catch (ODataError odataError)
 		{
@@ -116,11 +122,14 @@ internal abstract class Program
 		TeamCollectionResponse? teams = await _graphClient.Me.JoinedTeams.GetAsync();
 		if (teams?.Value == null) return;
 
-		foreach (Team team in teams.Value)
+		Task[] tasks = new Task[teams.Value.Count];
+
+		for (int i = 0; i < teams.Value.Count; i++)
 		{
+			Team team = teams.Value[i];
 			try
 			{
-				await FetchDrive(team);
+				tasks[i] = FetchDrive(team);
 			}
 			catch (ODataError odataError)
 			{
@@ -128,6 +137,8 @@ internal abstract class Program
 				Console.WriteLine(odataError.Error?.Message);
 			}
 		}
+
+		await Task.WhenAll(tasks);
 	}
 
 	private static async Task FetchDrive(Team team)
@@ -145,21 +156,27 @@ internal abstract class Program
 		if (_graphClient == null) return;
 
 		DriveItemCollectionResponse? children = await _graphClient.Drives[driveId].Items[itemId].Children.GetAsync();
+
 		if (children?.Value == null) return;
 
-		foreach (DriveItem child in children.Value)
+		List<Task> tasks = new();
+
+		for (int i = 0; i < children.Value.Count; i++)
 		{
+			DriveItem child = children.Value[i];
 			if (child.Video != null)
 			{
-				await DownloadRecording(child, driveId, teamName);
+				FileTasks.Add(() => DownloadRecording(child, driveId, teamName));
 			}
 			else if (child.Folder != null)
 			{
 				if (child.Id == null) continue;
 
-				await SearchForVideoFiles(child.Id, driveId, teamName);
+				tasks.Add(SearchForVideoFiles(child.Id, driveId, teamName));
 			}
 		}
+
+		await Task.WhenAll(tasks);
 	}
 
 	private static async Task DownloadRecording(DriveItem file, string driveId, string teamName)
