@@ -204,6 +204,16 @@ internal abstract class Program
 
 			localFileStream.Close();
 			Console.WriteLine($"Successfully downloaded: {file.Name}");
+
+			if (file.CreatedDateTime.HasValue)
+			{
+				File.SetCreationTimeUtc(filePath, file.CreatedDateTime.Value.DateTime);
+			}
+
+			if (file.LastModifiedDateTime.HasValue)
+			{
+				File.SetLastWriteTimeUtc(filePath, file.LastModifiedDateTime.Value.DateTime);
+			}
 		}
 		catch (ODataError odataError)
 		{
