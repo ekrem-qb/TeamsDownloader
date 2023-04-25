@@ -22,6 +22,8 @@ internal abstract class Program
 
 	private static readonly string[] Scopes = { "Team.ReadBasic.All", "Files.Read.All" };
 	private static readonly string SettingsFilePath = Path.GetFullPath(SettingsFileName);
+	private static readonly char[] InvalidFileNameChars = Path.GetInvalidFileNameChars();
+	private static readonly char[] InvalidPathChars = Path.GetInvalidPathChars();
 
 	private static IniConfigSource? _settings;
 	private static GraphServiceClient? _graphClient;
@@ -129,7 +131,7 @@ internal abstract class Program
 			Team team = teams.Value[i];
 			try
 			{
-				tasks[i] = FetchDrive(team);
+				tasks[i] = FetchSite(team);
 			}
 			catch (ODataError odataError)
 			{
@@ -141,21 +143,46 @@ internal abstract class Program
 		await Task.WhenAll(tasks);
 	}
 
-	private static async Task FetchDrive(Team team)
+	private static async Task FetchSite(Team team)
 	{
 		if (_graphClient == null) return;
 
-		Drive? drive = await _graphClient.Groups[team.Id].Drive.GetAsync();
-		if (drive?.Id == null) return;
+		Site? site = await _graphClient.Groups[team.Id].Sites[DriveRootPath].GetAsync();
+		if (site?.Id == null) return;
 
-		await SearchForVideoFiles(DriveRootPath, drive.Id, team.DisplayName ?? "");
+		await FetchDrives(site, team);
 	}
 
-	private static async Task SearchForVideoFiles(string itemId, string driveId, string teamName)
+	private static async Task FetchDrives(Site site, Team team)
 	{
 		if (_graphClient == null) return;
 
-		DriveItemCollectionResponse? children = await _graphClient.Drives[driveId].Items[itemId].Children.GetAsync();
+		DriveCollectionResponse? drives = await _graphClient.Sites[site.Id].Drives.GetAsync();
+		if (drives?.Value == null) return;
+
+		Task[] tasks = new Task[drives.Value.Count];
+
+		for (int i = 0; i < drives.Value.Count; i++)
+		{
+			try
+			{
+				tasks[i] = SearchForVideoFiles(DriveRootPath, drives.Value[i], team);
+			}
+			catch (ODataError odataError)
+			{
+				Console.WriteLine(odataError.Error?.Code);
+				Console.WriteLine(odataError.Error?.Message);
+			}
+		}
+
+		await Task.WhenAll(tasks);
+	}
+
+	private static async Task SearchForVideoFiles(string itemId, Drive drive, Team team)
+	{
+		if (_graphClient == null) return;
+
+		DriveItemCollectionResponse? children = await _graphClient.Drives[drive.Id].Items[itemId].Children.GetAsync();
 
 		if (children?.Value == null) return;
 
@@ -166,21 +193,32 @@ internal abstract class Program
 			DriveItem child = children.Value[i];
 			if (child.Video != null)
 			{
-				CheckFileExistence(child, driveId, teamName);
+				CheckFileExistence(child, drive, team);
 			}
 			else if (child.Folder != null)
 			{
 				if (child.Id == null) continue;
 
-				tasks.Add(SearchForVideoFiles(child.Id, driveId, teamName));
+				tasks.Add(SearchForVideoFiles(child.Id, drive, team));
 			}
 		}
 
 		await Task.WhenAll(tasks);
 	}
 
-	private static void CheckFileExistence(DriveItem file, string driveId, string teamName)
+	private static string ReplaceInvalidChars(string path)
 	{
+		path = string.Join("_", path.Split(InvalidPathChars));
+		path = string.Join("_", path.Split(InvalidFileNameChars));
+
+		return path;
+	}
+
+	private static void CheckFileExistence(DriveItem file, Drive drive, Team team)
+	{
+		if (drive.Id == null) return;
+		if (drive.Name == null) return;
+		if (team.DisplayName == null) return;
 		if (file.ParentReference?.Path == null) return;
 		if (file.Name == null) return;
 
@@ -191,7 +229,7 @@ internal abstract class Program
 
 		if (_saveFolderPath == null) return;
 
-		string filePath = Path.GetFullPath(Path.Combine(_saveFolderPath, teamName, filePathInTeams, file.Name));
+		string filePath = Path.GetFullPath(Path.Combine(_saveFolderPath, ReplaceInvalidChars(team.DisplayName), drive.Name, filePathInTeams, file.Name));
 		if (File.Exists(filePath))
 		{
 			Console.WriteLine("File already exists: " + file.Name);
@@ -208,7 +246,7 @@ internal abstract class Program
 			return;
 		}
 
-		FileTasks.Add(() => DownloadFile(file, driveId, filePath));
+		FileTasks.Add(() => DownloadFile(file, drive.Id, filePath));
 	}
 
 	private static async Task DownloadFile(DriveItem file, string driveId, string filePath)
