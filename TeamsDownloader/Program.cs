@@ -166,7 +166,7 @@ internal abstract class Program
 			DriveItem child = children.Value[i];
 			if (child.Video != null)
 			{
-				FileTasks.Add(() => DownloadRecording(child, driveId, teamName));
+				CheckFileExistence(child, driveId, teamName);
 			}
 			else if (child.Folder != null)
 			{
@@ -179,7 +179,7 @@ internal abstract class Program
 		await Task.WhenAll(tasks);
 	}
 
-	private static async Task DownloadRecording(DriveItem file, string driveId, string teamName)
+	private static void CheckFileExistence(DriveItem file, string driveId, string teamName)
 	{
 		if (file.ParentReference?.Path == null) return;
 		if (file.Name == null) return;
@@ -208,6 +208,11 @@ internal abstract class Program
 			return;
 		}
 
+		FileTasks.Add(() => DownloadFile(file, driveId, filePath));
+	}
+
+	private static async Task DownloadFile(DriveItem file, string driveId, string filePath)
+	{
 		try
 		{
 			if (_graphClient == null) return;
